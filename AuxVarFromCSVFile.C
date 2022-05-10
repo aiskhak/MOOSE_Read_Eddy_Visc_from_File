@@ -6,11 +6,17 @@ InputParameters
 AuxVarFromCSVFile::validParams()
 {
   InputParameters params = AuxKernel::validParams();
-  params.addRequiredParam<FileName>("file_name", "where eddy viscosity is stored, x, y, z, mu_t");
-  params.addParam<bool>("header", "True if there is a header in the file");
-  params.addParam<std::string>("delim", ",", "delimiter between the numbers");
-  params.ignoreParameter<ExecFlagEnum>("execute_on");      // read only once
-  params.set<ExecFlagEnum>("execute_on") = {EXEC_INITIAL}; // read only once
+
+  params.addRequiredParam<FileName>("file_name",
+                                    "name of the file in which the time sequence is read");
+  params.addParam<bool>("header",
+                        "indicates whether the file contains a header with the column names");
+  params.addParam<std::string>("delimiter", ",", "delimiter used to parse the file");
+
+  // Force this AuxKernel to perform computeValue() on INITIAL, by ignoring any user input
+  params.ignoreParameter<ExecFlagEnum>("execute_on");
+  params.set<ExecFlagEnum>("execute_on") = {EXEC_INITIAL};
+
   return params;
 }
 
@@ -21,33 +27,40 @@ AuxVarFromCSVFile::AuxVarFromCSVFile(const InputParameters & parameters)
               ? (getParam<bool>("header") ? MooseUtils::DelimitedFileReader::HeaderFlag::ON
                                           : MooseUtils::DelimitedFileReader::HeaderFlag::OFF)
               : MooseUtils::DelimitedFileReader::HeaderFlag::AUTO),
-  _delim(getParam<std::string>("delim"))
+  _delimiter(getParam<std::string>("delimiter"))
 {
   MooseUtils::DelimitedFileReader file(_file_name);
+
   file.setHeaderFlag(_header);
-  file.setDelimiter(_delim);
+  file.setDelimiter(_delimiter);
   file.read();
+
   _data = file.getData();
+
+  if (_data.size() != 4)
+    mooseError("AuxVarFromCSVFile expects that data are given as: 'x, y, z, val'.");
 }
 
 Real
 AuxVarFromCSVFile::computeValue()
 {
-  // find nearest point
+  // Find the nearest point from _data, and use its value
   Real x_qp = _q_point[_qp](0);
   Real y_qp = _q_point[_qp](1);
   Real z_qp = _q_point[_qp](2);
-  Real min = 1.e12;
+  Real min_distance = 1.0e30;
   Real val = 0.0;
+
   for (unsigned int i = 0; i < _data[0].size(); i++)
   {
-    Real dx   = x_qp - _data[0][i];
-    Real dy   = y_qp - _data[1][i];
-    Real dz   = z_qp - _data[2][i];
-    Real dist = std::sqrt(dx*dx + dy*dy + dz*dz);
-    if (dist < min)
+    Real dx = x_qp - _data[0][i];
+    Real dy = y_qp - _data[1][i];
+    Real dz = z_qp - _data[2][i];
+
+    Real distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (distance < min_distance)
     {
-      min = dist;
+      min_distance = distance;
       val = _data[3][i];
     }
   }

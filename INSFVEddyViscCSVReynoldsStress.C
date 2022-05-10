@@ -1,13 +1,14 @@
 #include "INSFVEddyViscCSVReynoldsStress.h"
 #include "INSFVVelocityVariable.h"
 #include "NS.h"
+#include "SystemBase.h"
 
-registerMooseObject("MooseApp", INSFVEddyViscCSVReynoldsStress);
+registerMooseObject("NavierStokesApp", INSFVEddyViscCSVReynoldsStress);
 
 InputParameters
 INSFVEddyViscCSVReynoldsStress::validParams()
 {
-  InputParameters params = FVFluxKernel::validParams();
+  InputParameters params = INSFVFluxKernel::validParams();
   params.addClassDescription("Computes force due to Reynolds stress term in incompressible RANS equations.");
   params.addRequiredCoupledVar("u", "Velocity in x direction.");
   params.addCoupledVar("v", "Velocity in y direction.");
@@ -17,12 +18,12 @@ INSFVEddyViscCSVReynoldsStress::validParams()
   params.addRequiredParam<MooseFunctorName>("eddy_viscosity_csv", "Eddy viscosity from CSV file.");
   MooseEnum momentum_component("x=0 y=1 z=2");
   params.addRequiredParam<MooseEnum>("momentum_component", momentum_component, "Component of momentum equation that this kernel applies to.");
-  params.set<unsigned short>("ghost_layers") = 2;
+  params.set<unsigned short>("ghost_layers") = 3;
   return params;
 }
 
 INSFVEddyViscCSVReynoldsStress::INSFVEddyViscCSVReynoldsStress(const InputParameters & params)
-  : FVFluxKernel(params),
+  : INSFVFluxKernel(params),
     _dim(_subproblem.mesh().dimension()),
     _axis_index(getParam<MooseEnum>("momentum_component")),
     _u_var(dynamic_cast<const INSFVVelocityVariable *>(getFieldVar("u", 0))),
@@ -49,49 +50,73 @@ INSFVEddyViscCSVReynoldsStress::INSFVEddyViscCSVReynoldsStress(const InputParame
 }
 
 ADReal
-INSFVEddyViscCSVReynoldsStress::computeQpResidual()
+INSFVEddyViscCSVReynoldsStress::computeStrongResidual()
 {
 #ifdef MOOSE_GLOBAL_AD_INDEXING
-  /*
-  constexpr Real offset = 1e-15; // prevents explosion of sqrt(x) derivative to infinity
-
+  
+  // compute dot product of strain rate tensor and normal vector (grad_v+grad_v^T)*n_hat
   const auto & grad_u = _u_var->adGradSln(*_face_info);
+  const ADRealVectorValue * grad_v = nullptr;
+  const ADRealVectorValue * grad_w = nullptr;
+  ADReal norm_strain_rate = grad_u(_axis_index) * _normal(0);
+  if (_dim >= 2)
+  {
+    grad_v = &_v_var->adGradSln(*_face_info);
+    norm_strain_rate += (*grad_v)(_axis_index)*_normal(1);
+    if (_dim >= 3)
+    {
+      grad_w = &_w_var->adGradSln(*_face_info);
+      norm_strain_rate += (*grad_w)(_axis_index)*_normal(2);
+    }
+  }
+  const ADRealVectorValue & var_grad = _index == 0 ? grad_u : (_index == 1 ? *grad_v : *grad_w);
+  norm_strain_rate += var_grad * _normal;
+  
+  // compute eddy diffusivity
+  /*
   ADReal symmetric_strain_tensor_norm = 2.0 * Utility::pow<2>(grad_u(0));
   if (_dim >= 2)
   {
-    const auto & grad_v = _v_var->adGradSln(*_face_info);
-    symmetric_strain_tensor_norm +=
-        2.0 * Utility::pow<2>(grad_v(1)) + Utility::pow<2>(grad_v(0) + grad_u(1));
+    symmetric_strain_tensor_norm += 2.0 * Utility::pow<2>((*grad_v)(1)) + 
+	                                Utility::pow<2>((*grad_v)(0) + grad_u(1));
     if (_dim >= 3)
-    {
-      const auto & grad_w = _w_var->adGradSln(*_face_info);
-      symmetric_strain_tensor_norm += 2.0 * Utility::pow<2>(grad_w(2)) +
-                                      Utility::pow<2>(grad_u(2) + grad_w(0)) +
-                                      Utility::pow<2>(grad_v(2) + grad_w(1));
-    }
+	{
+      symmetric_strain_tensor_norm += 2.0 * Utility::pow<2>((*grad_w)(2)) +
+                                      Utility::pow<2>(grad_u(2) + (*grad_w)(0)) +
+                                      Utility::pow<2>((*grad_v)(2) + (*grad_w)(1));
+	}
   }
-
+  constexpr Real offset = 1e-15; // prevents explosion of sqrt(x) derivative to infinity
   symmetric_strain_tensor_norm = std::sqrt(symmetric_strain_tensor_norm + offset);
+  // interpolate mixing length to face
+  const auto face = Moose::FV::makeCDFace(*_face_info, faceArgSubdomains());
+  const ADReal mixing_len = _mixing_len(face);
+  // compute the eddy diffusivity
+  ADReal eddy_diff = symmetric_strain_tensor_norm * mixing_len * mixing_len;
   */
-  // Interpolate the mixing length to the face
-  //const ADReal mixing_len = _mixing_len(std::make_tuple(
-  //    _face_info, Moose::FV::LimiterType::CentralDifference, true, faceArgSubdomains(_face_info)));
 
-  // Compute the eddy diffusivity
-  //ADReal eddy_diff = symmetric_strain_tensor_norm * mixing_len * mixing_len;
+  // interpolate eddy diffusivity to face
+  const auto face = Moose::FV::makeCDFace(*_face_info, faceArgSubdomains());
+  const ADReal eddy_diff = _eddy_visc_csv(face);
 
-  // Interpolate the eddy viscosity to the face
-  const ADReal eddy_diff = _eddy_visc_csv(std::make_tuple(
-      _face_info, Moose::FV::LimiterType::CentralDifference, true, faceArgSubdomains(_face_info)));
-  // Compute the dot product of the strain rate tensor and the normal vector
-  // aka (grad_v + grad_v^T) * n_hat
-  ADReal norm_strain_rate = gradUDotNormal();
-  norm_strain_rate += _u_var->adGradSln(*_face_info)(_axis_index) * _normal(0);
-  norm_strain_rate += _dim >= 2 ? _v_var->adGradSln(*_face_info)(_axis_index) * _normal(1) : 0;
-  norm_strain_rate += _dim >= 3 ? _w_var->adGradSln(*_face_info)(_axis_index) * _normal(2) : 0;
+  const ADReal rho = _rho(face);
 
-  const ADReal rho = _rho(std::make_tuple(
-      _face_info, Moose::FV::LimiterType::CentralDifference, true, faceArgSubdomains(_face_info)));
+  if (_face_type == FaceInfo::VarFaceNeighbors::ELEM ||
+      _face_type == FaceInfo::VarFaceNeighbors::BOTH)
+  {
+    const auto dof_number = _face_info->elem().dof_number(_sys.number(), _var.number(), 0);
+    // norm_strain_rate is a linear combination of degrees of freedom so it's safe to straight-up
+    // index into the derivatives vector at the dof we care about
+    _ae = norm_strain_rate.derivatives()[dof_number];
+    _ae *= -rho * eddy_diff;
+  }
+  if (_face_type == FaceInfo::VarFaceNeighbors::NEIGHBOR ||
+      _face_type == FaceInfo::VarFaceNeighbors::BOTH)
+  {
+    const auto dof_number = _face_info->neighbor().dof_number(_sys.number(), _var.number(), 0);
+    _an = norm_strain_rate.derivatives()[dof_number];
+    _an *= rho * eddy_diff;
+  }
 
   // Return the turbulent stress contribution to the momentum equation
   return -1 * rho * eddy_diff * norm_strain_rate;
@@ -100,4 +125,24 @@ INSFVEddyViscCSVReynoldsStress::computeQpResidual()
   return 0;
 
 #endif
+}
+
+void
+INSFVEddyViscCSVReynoldsStress::gatherRCData(const FaceInfo & fi)
+{
+  if (skipForBoundary(fi))
+    return;
+
+  _face_info = &fi;
+  _normal = fi.normal();
+  _face_type = fi.faceType(_var.name());
+
+  processResidual(computeStrongResidual() * (fi.faceArea() * fi.faceCoord()));
+
+  if (_face_type == FaceInfo::VarFaceNeighbors::ELEM ||
+      _face_type == FaceInfo::VarFaceNeighbors::BOTH)
+    _rc_uo.addToA(&fi.elem(), _index, _ae * (fi.faceArea() * fi.faceCoord()));
+  if (_face_type == FaceInfo::VarFaceNeighbors::NEIGHBOR ||
+      _face_type == FaceInfo::VarFaceNeighbors::BOTH)
+    _rc_uo.addToA(fi.neighborPtr(), _index, _an * (fi.faceArea() * fi.faceCoord()));
 }

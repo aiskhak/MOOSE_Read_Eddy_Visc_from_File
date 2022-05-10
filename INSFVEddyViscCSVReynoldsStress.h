@@ -1,30 +1,31 @@
-//* This file is part of the MOOSE framework
-//* https://www.mooseframework.org
-//*
-//* All rights reserved, see COPYRIGHT for full restrictions
-//* https://github.com/idaholab/moose/blob/master/COPYRIGHT
-//*
-//* Licensed under LGPL 2.1, please see LICENSE for details
-//* https://www.gnu.org/licenses/lgpl-2.1.html
+
 
 #pragma once
 
-#include "FVFluxKernel.h"
+#include "INSFVFluxKernel.h"
+#include "INSFVMomentumResidualObject.h"
 
 // Forward declare variable class
 class INSFVVelocityVariable;
 
-class INSFVEddyViscCSVReynoldsStress : public FVFluxKernel
+class INSFVEddyViscCSVReynoldsStress : public INSFVFluxKernel
 {
 public:
   static InputParameters validParams();
 
   INSFVEddyViscCSVReynoldsStress(const InputParameters & params);
 
-protected:
-  ADReal computeQpResidual() override;
+  using INSFVFluxKernel::gatherRCData;
+  void gatherRCData(const FaceInfo &) override final;
 
-  /// the dimension of the simulation
+protected:
+  /**
+   * Routine to compute this object's strong residual (e.g. not multipled by area). This routine
+   * should also populate the _ae and _an coefficients
+   */
+  ADReal computeStrongResidual();
+
+  /// The dimension of the simulation
   const unsigned int _dim;
 
   /// index x|y|z
@@ -42,7 +43,11 @@ protected:
 
   /// Turbulent eddy mixing length
   //const Moose::Functor<ADReal> & _mixing_len;
-
-  /// Eddy viscosity
   const Moose::Functor<ADReal> & _eddy_visc_csv;
+
+  /// Rhie-Chow element coefficient
+  ADReal _ae = 0;
+
+  /// Rhie-Chow neighbor coefficient
+  ADReal _an = 0;
 };
