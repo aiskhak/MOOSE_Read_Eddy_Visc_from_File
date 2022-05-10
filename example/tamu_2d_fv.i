@@ -6,6 +6,19 @@ velocity_interp_method = 'rc'
 mesh = 'tamu_2d_7.msh'
 v_in_av = 0.673
 
+[GlobalParams]
+  rhie_chow_user_object = 'rc'
+[]
+
+[UserObjects]
+  [rc]
+    type = INSFVRhieChowInterpolator
+    u = u
+    v = v
+    pressure = pressure
+  []
+[]
+
 [Mesh]
   type = FileMesh
   file = ${mesh}
@@ -106,11 +119,13 @@ v_in_av = 0.673
 
   [u_time]
     type = INSFVMomentumTimeDerivative
+	momentum_component = 'x'
     variable = 'u'
     rho = ${rho}
   []
   [u_advection]
     type = INSFVMomentumAdvection
+	momentum_component = 'x'
     variable = u
     advected_quantity = 'rhou'
     vel = 'velocity'
@@ -123,9 +138,10 @@ v_in_av = 0.673
     rho = ${rho}
   []
   [u_viscosity]
-    type = FVDiffusion
+    type = INSFVMomentumDiffusion
     variable = u
-    coeff = ${mu}
+    mu = ${mu}
+    momentum_component = 'x'
   []
   [u_viscosity_rans]
     type = INSFVEddyViscCSVReynoldsStress #INSFVMixingLengthReynoldsStress
@@ -146,11 +162,13 @@ v_in_av = 0.673
 
   [v_time]
     type = INSFVMomentumTimeDerivative
+	momentum_component = 'y'
     variable = v
     rho = ${rho}
   []
   [v_advection]
     type = INSFVMomentumAdvection
+	momentum_component = 'y'
     variable = v
     advected_quantity = 'rhov'
     vel = 'velocity'
@@ -163,9 +181,10 @@ v_in_av = 0.673
     rho = ${rho}
   []
   [v_viscosity]
-    type = FVDiffusion
+    type = INSFVMomentumDiffusion
     variable = v
-    coeff = ${mu}
+    mu = ${mu}
+    momentum_component = 'y'
   []
   [v_viscosity_rans]
     type = INSFVEddyViscCSVReynoldsStress #INSFVMixingLengthReynoldsStress
@@ -210,7 +229,7 @@ v_in_av = 0.673
   [eddy_viscosity_aux_ker]
     type = AuxVarFromCSVFile
     variable = eddy_viscosity_csv_aux_var
-    file_name = 'turb_visc_112.csv'
+    file_name = 'turb_visc_nek.csv'
     header = true
   []
   [dudx_aux_ker]
@@ -300,13 +319,13 @@ v_in_av = 0.673
 []
 
 [Materials]
-  [ins_fv]
-    type = INSFVMaterial
-    u = 'u'
-    v = 'v'
-    pressure = 'pressure'
-    rho = ${rho}
-  []
+  #[ins_fv]
+  #  type = INSFVMaterial
+  #  u = 'u'
+  #  v = 'v'
+  #  pressure = 'pressure'
+  #  rho = ${rho}
+  #[]
   [grad_u_mat]
     type = ADGenericFunctorGradientMaterial
     prop_names = 'grad_u'
